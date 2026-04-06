@@ -26,24 +26,24 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Read last built tag
-        id: state
+      - name: Check existing build runs for this release
+        id: existing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          URL="https://api.github.com/repos/${{ github.repository }}/actions/variables/LAST_UPSTREAM_RELEASE_TAG"
-          LAST=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$URL" | jq -r '.value // empty')
-          echo "last=$LAST" >> "$GITHUB_OUTPUT"
+          RUNS_URL="https://api.github.com/repos/${{ github.repository }}/actions/workflows/ios-ipa-unsigned.yml/runs?per_page=50"
+          COUNT=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$RUNS_URL" | jq -r --arg TAG "${{ steps.upstream.outputs.tag }}" '[.workflow_runs[] | select((.display_title // "" | contains("@ " + $TAG)) and (.status == "queued" or .status == "in_progress" or .conclusion == "success"))] | length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Decide if build is needed
         id: decide
         run: |
-          if [ "${{ steps.upstream.outputs.tag }}" = "${{ steps.state.outputs.last }}" ]; then
+          if [ "${{ steps.existing.outputs.count }}" -gt 0 ]; then
             echo "trigger=false" >> "$GITHUB_OUTPUT"
-            echo "No new release. Current: ${{ steps.upstream.outputs.tag }}"
+            echo "Release ${{ steps.upstream.outputs.tag }} already queued/in-progress/success"
           else
             echo "trigger=true" >> "$GITHUB_OUTPUT"
-            echo "New release detected: ${{ steps.upstream.outputs.tag }} (previous: ${{ steps.state.outputs.last }})"
+            echo "New release build required: ${{ steps.upstream.outputs.tag }}"
           fi
 
       - name: Trigger unsigned IPA workflow
@@ -57,33 +57,8 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/ios-ipa-unsigned.yml/dispatches" \
             -d "{\"ref\":\"dev\",\"inputs\":{\"ref\":\"${{ steps.upstream.outputs.tag }}\",\"source_repo\":\"amnezia-vpn/amnezia-client\"}}"
 
-      - name: Store last built release tag
-        if: steps.decide.outputs.trigger == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          BASE="https://api.github.com/repos/${{ github.repository }}/actions/variables"
-          PAYLOAD="{\"name\":\"LAST_UPSTREAM_RELEASE_TAG\",\"value\":\"${{ steps.upstream.outputs.tag }}\"}"
-
-          CREATE_STATUS=$(curl -s -o /tmp/create_var_resp.txt -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$BASE" \
-            -d "$PAYLOAD")
-
-          if [ "$CREATE_STATUS" = "201" ]; then
-            echo "Variable created"
-          else
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$BASE/LAST_UPSTREAM_RELEASE_TAG" \
-              -d "$PAYLOAD"
-            echo "Variable updated"
-          fi
-
       - name: Print summary
         run: |
           echo "upstream_latest=${{ steps.upstream.outputs.tag }}"
-          echo "last_built=${{ steps.state.outputs.last }}"
+          echo "existing_runs=${{ steps.existing.outputs.count }}"
           echo "triggered=${{ steps.decide.outputs.trigger }}"
