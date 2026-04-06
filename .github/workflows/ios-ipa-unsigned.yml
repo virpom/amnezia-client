@@ -13,6 +13,9 @@ on:
         required: false
         default: amnezia-vpn/amnezia-client
 
+permissions:
+  contents: write
+
 env:
   QT_VERSION: 6.10.1
   QT_MIRROR: https://mirrors.ocf.berkeley.edu/qt/
@@ -122,3 +125,21 @@ jobs:
           name: AmneziaVPN-iOS-unsigned-ipa
           path: AmneziaVPN-iOS-unsigned.ipa
           retention-days: 7
+
+      - name: Publish IPA to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RAW_REF="${{ inputs.ref }}"
+          SAFE_REF=$(echo "$RAW_REF" | tr '/:@ ' '----')
+          REL_TAG="unsigned-${SAFE_REF}"
+          REL_TITLE="Amnezia unsigned IPA (${RAW_REF})"
+          REL_NOTES="Source repo: ${{ inputs.source_repo }}
+Source ref: ${RAW_REF}
+Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if gh release view "$REL_TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$REL_TAG" "$GITHUB_WORKSPACE/AmneziaVPN-iOS-unsigned.ipa" -R "${{ github.repository }}" --clobber
+          else
+            gh release create "$REL_TAG" "$GITHUB_WORKSPACE/AmneziaVPN-iOS-unsigned.ipa" -R "${{ github.repository }}" --title "$REL_TITLE" --notes "$REL_NOTES"
+          fi
