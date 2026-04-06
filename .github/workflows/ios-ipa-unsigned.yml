@@ -1,4 +1,5 @@
 name: Build iOS IPA (Unsigned)
+run-name: "Unsigned IPA • ${{ inputs.source_repo }} @ ${{ inputs.ref }}"
 
 on:
   workflow_dispatch:
@@ -7,6 +8,10 @@ on:
         description: Git ref to build (branch, tag or commit SHA)
         required: false
         default: dev
+      source_repo:
+        description: Source repository (owner/name)
+        required: false
+        default: amnezia-vpn/amnezia-client
 
 env:
   QT_VERSION: 6.10.1
@@ -23,9 +28,10 @@ jobs:
         with:
           xcode-version: '26.1'
 
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.source_repo }}
           ref: ${{ inputs.ref }}
           submodules: recursive
           fetch-depth: 1
