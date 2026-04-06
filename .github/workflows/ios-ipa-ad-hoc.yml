@@ -1,0 +1,108 @@
+name: Build iOS IPA (Ad Hoc)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build (branch, tag or commit SHA)
+        required: false
+        default: dev
+
+env:
+  QT_VERSION: 6.10.1
+  QT_MIRROR: https://mirrors.ocf.berkeley.edu/qt/
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.1'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install desktop Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: qtremoteobjects qt5compat qtshadertools qtmultimedia qtimageformats
+          dir: ${{ runner.temp }}
+          setup-python: true
+          set-env: true
+          aqtversion: ==3.3.0
+          py7zrversion: ==0.22.*
+          extra: --base ${{ env.QT_MIRROR }}
+
+      - name: Install iOS Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: ios
+          modules: qtremoteobjects qt5compat qtshadertools qtmultimedia qtimageformats
+          dir: ${{ runner.temp }}
+          setup-python: true
+          set-env: true
+          aqtversion: ==3.3.0
+          py7zrversion: ==0.22.*
+          extra: --external 7z --base ${{ env.QT_MIRROR }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Setup gomobile
+        run: |
+          export PATH=$PATH:$HOME/go/bin
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+
+      - name: Install Python deps
+        run: pip install jsonschema jinja2
+
+      - name: Build iOS app (signed)
+        env:
+          IOS_TRUST_CERT_BASE64: ${{ secrets.IOS_TRUST_CERT_BASE64 }}
+          IOS_SIGNING_CERT_BASE64: ${{ secrets.IOS_SIGNING_CERT_BASE64 }}
+          IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+          IOS_APP_PROVISIONING_PROFILE: ${{ secrets.IOS_APP_PROVISIONING_PROFILE }}
+          IOS_NE_PROVISIONING_PROFILE: ${{ secrets.IOS_NE_PROVISIONING_PROFILE }}
+        run: |
+          export QT_BIN_DIR=${{ runner.temp }}/Qt/${{ env.QT_VERSION }}/ios/bin
+          export QT_MACOS_ROOT_DIR=${{ runner.temp }}/Qt/${{ env.QT_VERSION }}/macos
+          export PATH=$PATH:$HOME/go/bin
+          sh deploy/build_ios.sh
+
+      - name: Package IPA
+        run: |
+          APP_PATH=$(find ${{ github.workspace }}/build-ios -type d -name AmneziaVPN.app -path '*Release-iphoneos*' | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Release app bundle not found"
+            find ${{ github.workspace }}/build-ios -type d -name '*.app' || true
+            exit 1
+          fi
+          mkdir -p ${{ github.workspace }}/ipa/Payload
+          cp -R "$APP_PATH" ${{ github.workspace }}/ipa/Payload/
+          cd ${{ github.workspace }}/ipa
+          /usr/bin/zip -qry ${{ github.workspace }}/AmneziaVPN-iOS.ipa Payload
+          ls -lah ${{ github.workspace }}/AmneziaVPN-iOS.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmneziaVPN-iOS-ipa
+          path: AmneziaVPN-iOS.ipa
+          retention-days: 7
